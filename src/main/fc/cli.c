@@ -73,7 +73,7 @@ bool cliMode = false;
 #include "fc/fc_core.h"
 #include "fc/cli.h"
 #include "fc/config.h"
-#include "fc/controlrate_profile.h"
+#include "fc/control_profile.h"
 #include "fc/rc_adjustments.h"
 #include "fc/rc_controls.h"
 #include "fc/rc_modes.h"
@@ -106,6 +106,9 @@ bool cliMode = false;
 #include "rx/srxl2.h"
 #include "rx/crsf.h"
 
+#include "msp/msp_serial.h"
+#include "msp/msp_protocol_v2_common.h"
+
 #include "scheduler/scheduler.h"
 
 #include "sensors/acceleration.h"
@@ -129,6 +132,11 @@ bool cliMode = false;
 
 extern timeDelta_t cycleTime; // FIXME dependency on mw.c
 extern uint8_t detectedSensors[SENSOR_INDEX_COUNT];
+
+#ifdef USE_BOOTLOG
+extern char bootlog_buffer[USE_BOOTLOG];
+extern char *bootlog_head;
+#endif
 
 static serialPort_t *cliPort;
 
@@ -222,7 +230,7 @@ static const char *debugModeNames[DEBUG_COUNT] = {
 // sync with gyroSensor_e
 static const char *const gyroNames[] = {
     "NONE",     "AUTO",   "MPU6000",  "MPU6500", "MPU9250", "BMI160",
-    "ICM20689", "BMI088", "ICM42605", "BMI270",  "LSM6DXX", "FAKE"};
+    "ICM20689", "BMI088", "ICM42605", "BMI270",  "LSM6DXX", "ICM45686", "FAKE"};
 
 // sync this with sensors_e
 static const char * const sensorTypeNames[] = {
@@ -2692,6 +2700,8 @@ static void cliPid(char *cmdline) {
             programmingPidsMutable(i)->gains.D = args[D_GAIN];
             programmingPidsMutable(i)->gains.FF = args[FF_GAIN];
 
+            programmingPidInit();
+
             cliPid("");
         } else {
             cliShowParseError();
@@ -3595,6 +3605,41 @@ void cliRxBind(char *cmdline){
 }
 #endif
 
+static void cliBindMspRx(char *cmdline)
+{
+    if (isEmpty(cmdline)) {
+        cliShowParseError();
+        return;
+    }
+
+    int portIndex = fastA2I(cmdline);
+
+    if (portIndex < 0 || portIndex > 7) {
+        cliShowArgumentRangeError("port", 0, 7);
+        return;
+    }
+
+    serialPortUsage_t *portUsage = findSerialPortUsageByIdentifier(portIndex);
+    if (!portUsage || !portUsage->serialPort) {
+        cliPrintErrorLinef("Serial port %d is not open", portIndex);
+        return;
+    }
+
+    mspPort_t *mspPort = mspSerialPortFind(portUsage->serialPort);
+    if (!mspPort) {
+        cliPrintErrorLinef("Serial port %d is not configured for MSP", portIndex);
+        return;
+    }
+
+    uint8_t payload[4] = { portIndex, 0, 0, 0 };
+    int sent = mspSerialPushPort(MSP2_RX_BIND, payload, sizeof(payload), mspPort, MSP_V2_NATIVE); // this is sent as a response
+    if (sent > 0) {
+        cliPrintLinef("Sent MSP2_RX_BIND to serial port %d", portIndex);
+    } else {
+        cliPrintErrorLinef("Failed to send MSP2_RX_BIND to serial port %d", portIndex);
+    }
+}
+
 static void cliExit(char *cmdline)
 {
     UNUSED(cmdline);
@@ -3726,7 +3771,7 @@ static void cliDumpControlProfile(uint8_t profileIndex, uint8_t dumpMask)
     cliPrintHashLine("control_profile");
     cliPrintLinef("control_profile %d\r\n", getConfigProfile() + 1);
     dumpAllValues(PROFILE_VALUE, dumpMask);
-    dumpAllValues(CONTROL_RATE_VALUE, dumpMask);
+    dumpAllValues(CONTROL_VALUE, dumpMask);
     dumpAllValues(EZ_TUNE_VALUE, dumpMask);
 }
 
@@ -4099,13 +4144,14 @@ static void cliStatus(char *cmdline)
 #endif // for if at32
 #endif // for SITL
 
-    cliPrintLinef("Sensor status: GYRO=%s, ACC=%s, MAG=%s, BARO=%s, RANGEFINDER=%s, OPFLOW=%s, GPS=%s",
+    cliPrintLinef("Sensor status: GYRO=%s, ACC=%s, MAG=%s, BARO=%s, RANGEFINDER=%s, OPFLOW=%s, PITOT=%s, GPS=%s",
         hardwareSensorStatusNames[getHwGyroStatus()],
         hardwareSensorStatusNames[getHwAccelerometerStatus()],
         hardwareSensorStatusNames[getHwCompassStatus()],
         hardwareSensorStatusNames[getHwBarometerStatus()],
         hardwareSensorStatusNames[getHwRangefinderStatus()],
         hardwareSensorStatusNames[getHwOpticalFlowStatus()],
+        hardwareSensorStatusNames[getHwPitotmeterStatus()],
         hardwareSensorStatusNames[getHwGPSStatus()]
     );
 
@@ -4798,6 +4844,16 @@ static void cliUbloxPrintSatelites(char *arg)
 }
 #endif
 
+#ifdef USE_BOOTLOG
+static void printBootLog(char *cmdline __attribute__((unused))) {
+    int size = bootlog_head - bootlog_buffer;
+	cliPrintLinef("log size written: %i of %i bytes reserved", size, USE_BOOTLOG);
+    for (int ii = 0; ii < size; ii++) {
+        cliWrite(bootlog_buffer[ii]);
+    }
+}
+#endif
+
 static void cliHelp(char *cmdline);
 
 // should be sorted a..z for bsearch()
@@ -4814,11 +4870,12 @@ const clicmd_t cmdTable[] = {
     CLI_COMMAND_DEF("beeper", "turn on/off beeper", "list\r\n"
             "\t<+|->[name]", cliBeeper),
 #endif
+    CLI_COMMAND_DEF("bind_msp_rx", "initiate binding for MSP receivers (mLRS)", "<port>", cliBindMspRx),
 #if defined (USE_SERIALRX_SRXL2)
     CLI_COMMAND_DEF("bind_rx", "initiate binding for RX SPI or SRXL2", NULL, cliRxBind),
 #endif
 #if defined(USE_BOOTLOG)
-    CLI_COMMAND_DEF("bootlog", "show boot events", NULL, cliBootlog),
+    CLI_COMMAND_DEF("bootlog", "show boot log", NULL, printBootLog),
 #endif
 #ifdef USE_LED_STRIP
     CLI_COMMAND_DEF("color", "configure colors", NULL, cliColor),

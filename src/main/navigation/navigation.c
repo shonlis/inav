@@ -785,6 +785,7 @@ static const navigationFSMStateDescriptor_t navFSM[NAV_STATE_COUNT] = {
             [NAV_FSM_EVENT_SWITCH_TO_IDLE]              = NAV_STATE_IDLE,
             [NAV_FSM_EVENT_SWITCH_TO_RTH]               = NAV_STATE_RTH_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_FINISHED] = NAV_STATE_WAYPOINT_FINISHED,
+            [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP]     = NAV_STATE_WAYPOINT_PRE_ACTION,   // MSP2_INAV_SET_WP_INDEX
         }
     },
 
@@ -806,6 +807,7 @@ static const navigationFSMStateDescriptor_t navFSM[NAV_STATE_COUNT] = {
             [NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING]    = NAV_STATE_EMERGENCY_LANDING_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_COURSE_HOLD]          = NAV_STATE_COURSE_HOLD_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_CRUISE]               = NAV_STATE_CRUISE_INITIALIZE,
+            [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP]        = NAV_STATE_WAYPOINT_PRE_ACTION,    // MSP2_INAV_SET_WP_INDEX
         }
     },
 
@@ -830,6 +832,7 @@ static const navigationFSMStateDescriptor_t navFSM[NAV_STATE_COUNT] = {
             [NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING] = NAV_STATE_EMERGENCY_LANDING_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_COURSE_HOLD]       = NAV_STATE_COURSE_HOLD_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_CRUISE]            = NAV_STATE_CRUISE_INITIALIZE,
+            [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP]     = NAV_STATE_WAYPOINT_PRE_ACTION,    // MSP2_INAV_SET_WP_INDEX
         }
     },
 
@@ -851,6 +854,7 @@ static const navigationFSMStateDescriptor_t navFSM[NAV_STATE_COUNT] = {
             [NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING]    = NAV_STATE_EMERGENCY_LANDING_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_COURSE_HOLD]          = NAV_STATE_COURSE_HOLD_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_CRUISE]               = NAV_STATE_CRUISE_INITIALIZE,
+            [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP]        = NAV_STATE_WAYPOINT_PRE_ACTION,    // MSP2_INAV_SET_WP_INDEX
         }
     },
 
@@ -909,6 +913,7 @@ static const navigationFSMStateDescriptor_t navFSM[NAV_STATE_COUNT] = {
             [NAV_FSM_EVENT_SWITCH_TO_EMERGENCY_LANDING]    = NAV_STATE_EMERGENCY_LANDING_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_COURSE_HOLD]          = NAV_STATE_COURSE_HOLD_INITIALIZE,
             [NAV_FSM_EVENT_SWITCH_TO_CRUISE]               = NAV_STATE_CRUISE_INITIALIZE,
+            [NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP]        = NAV_STATE_WAYPOINT_PRE_ACTION,    // MSP2_INAV_SET_WP_INDEX
         }
     },
 
@@ -2718,9 +2723,10 @@ static fpVector3_t * rthGetHomeTargetPosition(rthTargetMode_e mode)
 
         case RTH_HOME_ENROUTE_PROPORTIONAL:
             {
-                float rthTotalDistanceToTravel = posControl.rthState.rthInitialDistance - (STATE(FIXED_WING_LEGACY) ? navConfig()->fw.loiter_radius : 0);
+                uint16_t endPointDistance = STATE(FIXED_WING_LEGACY) ? navConfig()->fw.loiter_radius : 0;
+                float rthTotalDistanceToTravel = posControl.rthState.rthInitialDistance - endPointDistance;
                 if (rthTotalDistanceToTravel >= 100) {
-                    float ratioNotTravelled = constrainf(posControl.homeDistance / rthTotalDistanceToTravel, 0.0f, 1.0f);
+                    float ratioNotTravelled = constrainf((posControl.homeDistance - endPointDistance) / rthTotalDistanceToTravel, 0.0f, 1.0f);
                     posControl.rthState.homeTmpWaypoint.z = (posControl.rthState.rthInitialAltitude * ratioNotTravelled) + (posControl.rthState.rthFinalAltitude * (1.0f - ratioNotTravelled));
                 }
                 else {
@@ -3099,12 +3105,10 @@ static void updateDesiredRTHAltitude(void)
             switch (navConfig()->general.flags.rth_alt_control_mode) {
                 case NAV_RTH_NO_ALT:
                     posControl.rthState.rthInitialAltitude = posControl.actualState.abs.pos.z;
-                    posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
                     break;
 
                 case NAV_RTH_EXTRA_ALT: // Maintain current altitude + predefined safety margin
                     posControl.rthState.rthInitialAltitude = posControl.actualState.abs.pos.z + navConfig()->general.rth_altitude;
-                    posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
                     break;
 
                 case NAV_RTH_MAX_ALT:
@@ -3112,19 +3116,17 @@ static void updateDesiredRTHAltitude(void)
                     if (navConfig()->general.rth_altitude > 0) {
                         posControl.rthState.rthInitialAltitude = MAX(posControl.rthState.rthInitialAltitude, posControl.rthState.homePosition.pos.z + navConfig()->general.rth_altitude);
                     }
-                    posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
                     break;
 
                 case NAV_RTH_AT_LEAST_ALT:  // Climb to at least some predefined altitude above home
                     posControl.rthState.rthInitialAltitude = MAX(posControl.rthState.homePosition.pos.z + navConfig()->general.rth_altitude, posControl.actualState.abs.pos.z);
-                    posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
                     break;
 
                 case NAV_RTH_CONST_ALT:     // Climb/descend to predefined altitude above home
                 default:
                     posControl.rthState.rthInitialAltitude = posControl.rthState.homePosition.pos.z + navConfig()->general.rth_altitude;
-                    posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
             }
+            posControl.rthState.rthFinalAltitude = posControl.rthState.rthInitialAltitude;
 
             if ((navConfig()->general.flags.rth_use_linear_descent) && (navConfig()->general.rth_home_altitude > 0) && (navConfig()->general.rth_linear_descent_start_distance == 0) ) {
                 posControl.rthState.rthFinalAltitude = posControl.rthState.homePosition.pos.z + navConfig()->general.rth_home_altitude;
@@ -3870,6 +3872,78 @@ void getWaypoint(uint8_t wpNumber, navWaypoint_t * wpData)
     }
 }
 
+int isGCSValid(void)
+{
+    return (ARMING_FLAG(ARMED) && 
+            (posControl.flags.estPosStatus >= EST_TRUSTED) && 
+            posControl.gpsOrigin.valid && 
+            posControl.flags.isGCSAssistedNavigationEnabled && 
+            (posControl.navState == NAV_STATE_POSHOLD_3D_IN_PROGRESS));
+}
+
+/*
+ * navSetActiveWaypointIndex - MSP2_INAV_SET_WP_INDEX handler
+ *
+ * Jumps to a specific waypoint during an active WP mission without interrupting
+ * navigation mode.  'index' is 0-based and relative to the mission start
+ * (i.e. the first waypoint in the loaded mission is index 0, regardless of
+ * startWpIndex).
+ *
+ * Returns true on success, false when the preconditions are not met (not armed,
+ * not in WP mode, or index out of range).
+ */
+bool navSetActiveWaypointIndex(uint8_t index)
+{
+    // Must be armed and actively executing a WP mission
+    if (!ARMING_FLAG(ARMED) || !FLIGHT_MODE(NAV_WP_MODE)) {
+        return false;
+    }
+
+    // Translate user-visible 0-based index to the internal absolute index
+    int8_t absoluteIndex = (int8_t)index + posControl.startWpIndex;
+    if (absoluteIndex < posControl.startWpIndex ||
+        absoluteIndex >= posControl.startWpIndex + posControl.waypointCount) {
+        return false;
+    }
+
+    posControl.activeWaypointIndex = absoluteIndex;
+    posControl.wpMissionRestart = false;
+
+    // Transition immediately to WAYPOINT_PRE_ACTION so the new WP is set up
+    // on this navigation tick.  navProcessFSMEvents is safe to call here as
+    // everything runs in the same main-loop task context.
+    navProcessFSMEvents(NAV_FSM_EVENT_SWITCH_TO_WAYPOINT_JUMP);
+    return true;
+}
+
+/*
+ * navSetCruiseHeading - MSP2_INAV_SET_CRUISE_HEADING handler
+ *
+ * Sets the target heading while Cruise or Course Hold mode is active.
+ * 'headingCd' is in centidegrees (0-35999), matching the internal
+ * posControl.cruise.course representation.
+ *
+ * Returns true on success, false when the preconditions are not met.
+ */
+bool navSetCruiseHeading(int32_t headingCd)
+{
+    if (!ARMING_FLAG(ARMED)) {
+        return false;
+    }
+
+    // Only valid while Cruise or Course Hold is the active navigation mode
+    if (!FLIGHT_MODE(NAV_COURSE_HOLD_MODE)) {
+        return false;
+    }
+
+    // Clamp to valid centidegree range
+    headingCd = ((headingCd % 36000) + 36000) % 36000;
+
+    posControl.cruise.course         = headingCd;
+    posControl.cruise.previousCourse = headingCd;
+    return true;
+}
+
 void setWaypoint(uint8_t wpNumber, const navWaypoint_t * wpData)
 {
     gpsLocation_t wpLLH;
@@ -3888,9 +3962,7 @@ void setWaypoint(uint8_t wpNumber, const navWaypoint_t * wpData)
     }
     // WP #255 - special waypoint - directly set desiredPosition
     // Only valid when armed and in poshold mode
-    else if ((wpNumber == 255) && (wpData->action == NAV_WP_ACTION_WAYPOINT) &&
-             ARMING_FLAG(ARMED) && (posControl.flags.estPosStatus == EST_TRUSTED) && posControl.gpsOrigin.valid && posControl.flags.isGCSAssistedNavigationEnabled &&
-             (posControl.navState == NAV_STATE_POSHOLD_3D_IN_PROGRESS)) {
+    else if ((wpNumber == 255) && (wpData->action == NAV_WP_ACTION_WAYPOINT) && isGCSValid()) {
         // Convert to local coordinates
         geoConvertGeodeticToLocal(&wpPos.pos, &posControl.gpsOrigin, &wpLLH, GEO_ALT_RELATIVE);
 
@@ -4156,6 +4228,7 @@ void calculateAndSetActiveWaypointToLocalPosition(const fpVector3_t *pos)
         posControl.activeWaypoint.bearing = calculateBearingToDestination(pos);
     }
     posControl.activeWaypoint.nextTurnAngle = -1;     // no turn angle set (-1), will be set by WP mode as required
+    posControl.flags.wpTurnSmoothingActive = false;   // a freshly activated WP (e.g. JUMP target) must not inherit the previous WP's smoothing-reached state
 
     posControl.activeWaypoint.pos = *pos;
 
@@ -4959,13 +5032,23 @@ void navigationUsePIDs(void)
                                         0.0f
     );
 
-    navPidInit(&posControl.pids.fw_alt, (float)pidProfile()->bank_fw.pid[PID_POS_Z].P / 100.0f,
-                                        (float)pidProfile()->bank_fw.pid[PID_POS_Z].I / 100.0f,
-                                        (float)pidProfile()->bank_fw.pid[PID_POS_Z].D / 300.0f,
-                                        (float)pidProfile()->bank_fw.pid[PID_POS_Z].FF / 100.0f,
-                                        NAV_DTERM_CUT_HZ,
-                                        0.0f
-    );
+    if (pidProfile()->fwAltControlUsePos) {
+        navPidInit(&posControl.pids.fw_alt, (float)pidProfile()->bank_fw.pid[PID_POS_Z].P / 100.0f,
+                                            (float)pidProfile()->bank_fw.pid[PID_POS_Z].I / 100.0f,
+                                            (float)pidProfile()->bank_fw.pid[PID_POS_Z].D / 100.0f,
+                                            0.0f,
+                                            NAV_DTERM_CUT_HZ,
+                                            0.0f
+        );
+    } else {
+        navPidInit(&posControl.pids.fw_alt, (float)pidProfile()->bank_fw.pid[PID_POS_Z].P / 100.0f,
+                                            (float)pidProfile()->bank_fw.pid[PID_POS_Z].I / 100.0f,
+                                            (float)pidProfile()->bank_fw.pid[PID_POS_Z].D / 300.0f,
+                                            (float)pidProfile()->bank_fw.pid[PID_POS_Z].FF / 100.0f,
+                                            NAV_DTERM_CUT_HZ,
+                                            0.0f
+        );
+    }
 
     navPidInit(&posControl.pids.fw_heading, (float)pidProfile()->bank_fw.pid[PID_POS_HEADING].P / 10.0f,
                                         (float)pidProfile()->bank_fw.pid[PID_POS_HEADING].I / 10.0f,

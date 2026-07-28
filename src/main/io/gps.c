@@ -451,6 +451,9 @@ void gpsInit(void)
     gpsStats.errors = 0;
     gpsStats.timeouts = 0;
 
+    // Initialize hardware version to unknown (for MSP_GPSSTATISTICS)
+    gpsState.hwVersion = 0;
+
     // Reset solution, timeout and prepare to start
     gpsResetSolution(&gpsSolDRV);
     gpsResetSolution(&gpsSol);
@@ -544,6 +547,13 @@ bool gpsUpdate(void)
     }
 #endif
 
+    // Driver-based providers (MSP, FAKE) never open a serial port; gpsPort stays NULL.
+    // If gps_provider is changed via CLI to a serial-based provider without rebooting,
+    // the serial handler would dereference NULL on the next tick and hard-fault.
+    if (!gpsProviders[gpsState.gpsConfig->provider].isDriverBased && !gpsState.gpsPort) {
+        return false;
+    }
+
     switch (gpsState.state) {
     default:
     case GPS_INITIALIZING:
@@ -594,6 +604,10 @@ bool gpsUpdate(void)
 
 void gpsEnablePassthrough(serialPort_t *gpsPassthroughPort)
 {
+    if (!gpsState.gpsPort) {
+        return;
+    }
+
     waitForSerialPortToFinishTransmitting(gpsState.gpsPort);
     waitForSerialPortToFinishTransmitting(gpsPassthroughPort);
 
