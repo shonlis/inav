@@ -622,18 +622,19 @@ def plot_trajectories_grid(results):
 
         # True path BEFORE jam (to show intended route)
         pre_jam = true_traj[:JAM_IDX+1]
-        ax.plot(pre_jam[:, 0], pre_jam[:, 1], color='k', linewidth=1.1, label='True pre-jam path')
+        ax.plot(pre_jam[:, 0], pre_jam[:, 1], color='black', linewidth=1.5, label='True pre-jam path', zorder=3)
 
         # Mark jam location
-        ax.scatter(jam_pt[0], jam_pt[1], color='red', marker='x', s=80, label='Jam point')
+        ax.scatter(jam_pt[0], jam_pt[1], color='red', marker='x', s=120, linewidths=2.5, label='Jam point', zorder=4)
 
         # Plot executed trajectory (from start to end)
-        ax.plot(exec_traj[:, 0], exec_traj[:, 1], color=COLORS[i], linewidth=2.0,
-                label=f"Executed: {res['chosen_action'] or 'None'}")
+        ax.plot(exec_traj[:, 0], exec_traj[:, 1], color=COLORS[i], linewidth=2.0, alpha=0.8,
+                label=f"Executed: {res['chosen_action'] or 'None'}", zorder=2)
 
         # Mark final point
         final = exec_traj[-1]
-        ax.scatter(final[0], final[1], color=COLORS[i], marker='o', s=60, label='Final position')
+        ax.scatter(final[0], final[1], color=COLORS[i], marker='o', s=80, linewidths=1.5, 
+                   label='Final position', zorder=4, edgecolors='black')
 
         # Text box summarizing conditions & decision
         cfg = res['cfg']
@@ -647,12 +648,12 @@ def plot_trajectories_grid(results):
         ax.text(0.02, 0.98, txt, transform=ax.transAxes, fontsize=9, va='top',
                 bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.85))
 
-        ax.set_title(cfg['name'])
+        ax.set_title(cfg['name'], fontsize=11, fontweight='bold')
         ax.set_xlabel('X (m)')
         ax.set_ylabel('Y (m)')
         ax.axis('equal')
-        ax.grid(True)
-        ax.legend(fontsize='small')
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize='small', loc='lower right')
 
     plt.tight_layout()
     return fig
